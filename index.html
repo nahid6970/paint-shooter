@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Splat Arena 3D - 1v1 Tactical Rival Duel</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Three.js library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <!-- 3D Canvas Container -->
+  <div id="game-container"></div>
+
+  <!-- Screen Paint Splatter Damage Overlay -->
+  <div id="damage-overlay" class="damage-overlay"></div>
+
+  <!-- HUD Overlay -->
+  <div id="hud" class="hidden">
+    <!-- Top Bar Stats -->
+    <div class="hud-top">
+      <!-- Player Health Card -->
+      <div class="hud-card health-card">
+        <span class="hud-label">PLAYER HEALTH</span>
+        <div class="health-bar-bg">
+          <div id="health-bar" class="health-bar-fill"></div>
+        </div>
+        <span id="health-display" class="health-val">100 HP</span>
+      </div>
+
+      <!-- Rival Operative Health Card -->
+      <div class="hud-card rival-card">
+        <span class="hud-label">RIVAL OPERATIVE</span>
+        <div class="rival-hp-bar-bg">
+          <div id="rival-hp-bar" class="rival-hp-bar-fill"></div>
+        </div>
+        <span id="rival-hp-text" class="rival-hp-val">100% HP</span>
+      </div>
+
+      <div class="hud-card">
+        <span class="hud-label">SCORE</span>
+        <span id="score-display" class="hud-value">0</span>
+      </div>
+      <div class="hud-card">
+        <span class="hud-label">TIME</span>
+        <span id="timer-display" class="hud-value">60</span>s
+      </div>
+      <div class="hud-card">
+        <span class="hud-label">CAMERA [V]</span>
+        <span id="camera-badge" class="hud-badge-cam">1ST PERSON</span>
+      </div>
+      <div class="hud-card">
+        <span class="hud-label">DIFFICULTY</span>
+        <span id="difficulty-badge" class="hud-badge">MEDIUM</span>
+      </div>
+    </div>
+
+    <!-- Center Crosshair & Hitmarker -->
+    <div id="crosshair-container">
+      <div id="crosshair">
+        <div class="crosshair-dot"></div>
+        <div class="crosshair-line top"></div>
+        <div class="crosshair-line bottom"></div>
+        <div class="crosshair-line left"></div>
+        <div class="crosshair-line right"></div>
+      </div>
+      <div id="hitmarker" class="hitmarker hidden"></div>
+    </div>
+
+    <!-- Bottom Controls & Ink Tank -->
+    <div class="hud-bottom">
+      <div class="ink-meter-container">
+        <div class="ink-header">
+          <span>INK TANK</span>
+          <span id="ink-percent">100%</span>
+        </div>
+        <div class="ink-bar-bg">
+          <div id="ink-bar" class="ink-bar-fill"></div>
+        </div>
+        <div id="reload-prompt" class="hidden">PRESS [R] OR WAIT TO REFILL</div>
+      </div>
+
+      <!-- AI State Indicator Pill -->
+      <div class="ai-status-card">
+        <span class="ai-label">RIVAL TACTIC</span>
+        <span id="ai-status-text" class="ai-status-val">SEEKING COVER</span>
+      </div>
+
+      <!-- Color Palette Selector -->
+      <div class="palette-container">
+        <span class="palette-title">INK COLOR [1 - 6]</span>
+        <div class="color-palette" id="color-palette">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Start & Difficulty Menu Overlay -->
+  <div id="start-menu" class="menu-overlay">
+    <div class="menu-modal">
+      <div class="logo-container">
+        <h1 class="game-title">SPLAT ARENA <span>3D</span></h1>
+        <p class="game-subtitle">1v1 Tactical Operative Duel &bull; Smart AI &bull; Cover &amp; Flank</p>
+      </div>
+
+      <div class="menu-section">
+        <h3>SELECT DIFFICULTY</h3>
+        <div class="difficulty-grid">
+          <button class="diff-btn" data-diff="easy">
+            <span class="diff-title">EASY</span>
+            <span class="diff-desc">Slower reaction. 6 HP rival. Basic cover hops. 150 Player HP.</span>
+          </button>
+          <button class="diff-btn active" data-diff="medium">
+            <span class="diff-title">MEDIUM</span>
+            <span class="diff-desc">Smart cover &amp; peeking. Predictive dodges. 10 HP rival. 100 Player HP.</span>
+          </button>
+          <button class="diff-btn" data-diff="hard">
+            <span class="diff-title">HARD</span>
+            <span class="diff-desc">Relentless flanking, 15 HP rival, lead aiming &amp; rapid burst fire.</span>
+          </button>
+          <button class="diff-btn" data-diff="insane">
+            <span class="diff-title">INSANE</span>
+            <span class="diff-desc">Grandmaster AI: 20 HP, shield regen in cover, 95% dodge reflex.</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="menu-section controls-guide">
+        <h3>CONTROLS</h3>
+        <div class="controls-list">
+          <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</div>
+          <div><kbd>V</kbd> Toggle 1st / 3rd Person</div>
+          <div><kbd>MOUSE</kbd> Aim &amp; Look</div>
+          <div><kbd>LEFT CLICK</kbd> Fire Paintball</div>
+          <div><kbd>SPACE</kbd> Jump</div>
+          <div><kbd>SHIFT</kbd> Sprint</div>
+          <div><kbd>R</kbd> Refill Ink</div>
+          <div><kbd>1 - 6</kbd> Switch Paint Color</div>
+          <div><kbd>ESC</kbd> Pause / Menu</div>
+        </div>
+      </div>
+
+      <button id="play-btn" class="btn-primary">ENTER 1V1 DUEL</button>
+      <p class="click-note">Uses Mouse Pointer Lock &bull; Press <kbd>V</kbd> anytime to toggle camera perspective</p>
+    </div>
+  </div>
+
+  <!-- Game Over / Victory Modal -->
+  <div id="game-over-modal" class="menu-overlay hidden">
+    <div class="menu-modal">
+      <h2 id="result-title" class="result-title">ARENA CLEARED!</h2>
+      <p id="result-subtitle" class="result-subtitle">Great shooting!</p>
+
+      <div class="stats-summary">
+        <div class="stat-row">
+          <span>Final Score:</span>
+          <strong id="final-score">0</strong>
+        </div>
+        <div class="stat-row">
+          <span>Rival Operative:</span>
+          <strong id="final-splats">SPLATTERED</strong>
+        </div>
+        <div class="stat-row">
+          <span>Paint Accuracy:</span>
+          <strong id="final-accuracy">0%</strong>
+        </div>
+        <div class="stat-row">
+          <span>Difficulty:</span>
+          <strong id="final-difficulty">MEDIUM</strong>
+        </div>
+      </div>
+
+      <div class="modal-buttons">
+        <button id="restart-btn" class="btn-primary">REMATCH</button>
+        <button id="change-diff-btn" class="btn-secondary">CHANGE DIFFICULTY</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio Toggle -->
+  <button id="audio-toggle" class="audio-toggle-btn" title="Toggle Sound">🔊</button>
+
+  <script src="game.js"></script>
+</body>
+</html>
