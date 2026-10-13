@@ -253,14 +253,14 @@ class SoundEffects {
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     osc.type = 'triangle';
-    osc.frequency.setValueAtTime(280, now);
-    osc.frequency.linearRampToValueAtTime(850, now + 0.35);
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.linearRampToValueAtTime(780, now + 2.2);
     gain.gain.setValueAtTime(0.25, now);
-    gain.gain.linearRampToValueAtTime(0.001, now + 0.35);
+    gain.gain.linearRampToValueAtTime(0.001, now + 2.2);
     osc.connect(gain);
     gain.connect(this.ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.35);
+    osc.stop(now + 2.2);
   }
 }
 
@@ -718,6 +718,17 @@ class SplatArenaGame {
     gunGroup.position.set(0.48, 1.2, 0.4);
     group.add(gunGroup);
 
+    // Floating 3D Overhead Health Bar & Nameplate Sprite
+    const canvas = document.createElement('canvas');
+    canvas.width = 180;
+    canvas.height = 42;
+    const spriteTex = new THREE.CanvasTexture(canvas);
+    const spriteMat = new THREE.SpriteMaterial({ map: spriteTex, depthTest: false });
+    const hpSprite = new THREE.Sprite(spriteMat);
+    hpSprite.scale.set(2.4, 0.56, 1);
+    hpSprite.position.set(0, 2.75, 0);
+    group.add(hpSprite);
+
     group.position.set(0, 0, -26);
     this.scene.add(group);
 
@@ -726,6 +737,10 @@ class SplatArenaGame {
       legL,
       legR,
       gunGroup,
+      hpSprite,
+      canvas,
+      ctx: canvas.getContext('2d'),
+      spriteTex,
       walkCycle: 0,
       maxHp: this.config.rivalHp,
       hp: this.config.rivalHp,
@@ -744,6 +759,7 @@ class SplatArenaGame {
       active: true,
       hitboxRadius: 1.4
     };
+    this.updateRivalHpBar();
   }
 
   // ============================================================================
@@ -751,6 +767,12 @@ class SplatArenaGame {
   // ============================================================================
   shootPlayerPaintball() {
     if (!this.isPlaying) return;
+
+    // Cannot shoot while actively reloading
+    if (this.isReloading) {
+      this.sound.playEmpty();
+      return;
+    }
 
     if (this.ink < this.config.inkCost) {
       this.sound.playEmpty();
@@ -808,6 +830,12 @@ class SplatArenaGame {
 
   rivalFireBurstShot() {
     if (!this.rival || !this.rival.active) return;
+
+    // Strict Line-of-Sight Check: Do NOT shoot if wall/pillar blocks the view!
+    if (!this.hasLineOfSight(this.rival.group.position, this.player.position)) {
+      return;
+    }
+
     this.sound.playEnemyShoot();
 
     const startPos = this.rival.group.position.clone().add(new THREE.Vector3(0, 1.4, 0));
@@ -962,11 +990,14 @@ class SplatArenaGame {
   hasLineOfSight(posA, posB) {
     const origin = posA.clone().add(new THREE.Vector3(0, 1.4, 0));
     const target = posB.clone().add(new THREE.Vector3(0, 1.4, 0));
-    const dir = target.clone().sub(origin);
-    const dist = dir.length();
-    dir.normalize();
+    const toTarget = target.clone().sub(origin);
+    const dist = toTarget.length();
+    if (dist < 0.2) return true;
+    toTarget.normalize();
 
-    const ray = new THREE.Raycaster(origin, dir, 0.1, dist);
+    // Start 0.4 units forward along direction to avoid self-clipping with current cover pillar
+    const start = origin.clone().add(toTarget.clone().multiplyScalar(0.4));
+    const ray = new THREE.Raycaster(start, toTarget, 0.1, Math.max(0.1, dist - 0.7));
     const hits = ray.intersectObjects(this.obstacleMeshes);
     return hits.length === 0;
   }
@@ -1105,6 +1136,7 @@ class SplatArenaGame {
           r.state = 'IN_COVER';
           r.peekTimer = this.config.peekReaction;
           r.peekDirection = (Math.random() > 0.5 ? 1 : -1);
+          r.peekSearchTime = 0;
         }
         break;
       }
@@ -1118,20 +1150,34 @@ class SplatArenaGame {
           r.state = 'PEEK_AND_FIRE';
           r.burstShotsRemaining = this.config.burstCount;
           r.burstTimer = 0.05;
+          r.peekSearchTime = 0;
         }
         break;
       }
 
       case 'PEEK_AND_FIRE': {
-        this.dom.aiStatusText.textContent = 'PEEKING & FIRING';
-        this.dom.aiStatusText.style.color = '#ff0055';
-
         // Step out to the side of the pillar to get line-of-sight
         if (!canSeePlayer) {
           isMoving = true;
+          this.dom.aiStatusText.textContent = 'PEEKING CORNER';
+          this.dom.aiStatusText.style.color = '#f59e0b';
           const peekVec = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x).normalize().multiplyScalar(r.peekDirection);
           rivalPos.addScaledVector(peekVec, this.config.rivalSpeed * 0.9 * delta);
+
+          // If peeking for more than 1.1s without visual, give up and flank
+          r.peekSearchTime = (r.peekSearchTime || 0) + delta;
+          if (r.peekSearchTime > 1.1) {
+            r.peekSearchTime = 0;
+            r.state = 'FLANK';
+            r.repositionTimer = 2.2;
+          }
+          break; // STRICT: NEVER shoot while blocked by walls!
         }
+
+        // Line-of-sight is CLEAR and confirmed
+        r.peekSearchTime = 0;
+        this.dom.aiStatusText.textContent = 'PEEKING & FIRING';
+        this.dom.aiStatusText.style.color = '#ff0055';
 
         // Fire Burst
         r.burstTimer -= delta;
@@ -1141,10 +1187,10 @@ class SplatArenaGame {
           r.burstTimer = this.config.burstDelay;
 
           if (r.burstShotsRemaining <= 0) {
-            // Burst finished -> Reposition or duck back into cover
-            if (Math.random() < 0.4) {
+            // Burst finished -> Duck back into cover or flank
+            if (Math.random() < 0.45) {
               r.state = 'FLANK';
-              r.repositionTimer = 2.5;
+              r.repositionTimer = 2.4;
             } else {
               r.state = 'SEEK_COVER';
               r.targetCoverPos = null;
@@ -1165,10 +1211,16 @@ class SplatArenaGame {
         const flankVec = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x).normalize().multiplyScalar(r.peekDirection);
         rivalPos.addScaledVector(flankVec, this.config.rivalSpeed * 1.15 * delta);
 
-        if (r.repositionTimer <= 0 || (canSeePlayer && Math.random() < 0.03)) {
+        if (canSeePlayer) {
+          // Visual acquired while flanking! Stop and open fire
           r.state = 'PEEK_AND_FIRE';
           r.burstShotsRemaining = this.config.burstCount;
           r.burstTimer = 0.05;
+          r.peekSearchTime = 0;
+        } else if (r.repositionTimer <= 0) {
+          // Reposition completed, take fresh cover
+          r.state = 'SEEK_COVER';
+          r.targetCoverPos = null;
         }
         break;
       }
@@ -1215,6 +1267,31 @@ class SplatArenaGame {
     const pct = Math.max(0, Math.round((this.rival.hp / this.rival.maxHp) * 100));
     this.dom.rivalHpBar.style.width = `${pct}%`;
     this.dom.rivalHpText.textContent = `${pct}% HP`;
+
+    // Update 3D overhead sprite canvas
+    if (this.rival.ctx && this.rival.canvas) {
+      const { ctx, canvas, spriteTex } = this.rival;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Background
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#f43f5e';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+
+      // Label
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.fillText(`RIVAL [${this.rival.hp} / ${this.rival.maxHp}]`, canvas.width / 2, 16);
+
+      // Fill Bar
+      ctx.fillStyle = '#ff0055';
+      ctx.fillRect(4, 22, (canvas.width - 8) * (pct / 100), 15);
+
+      spriteTex.needsUpdate = true;
+    }
   }
 
   // ============================================================================
@@ -1272,7 +1349,7 @@ class SplatArenaGame {
               this.createPaintSplatter(floorHits[0].point, new THREE.Vector3(0, 1, 0), p.color, 2.5);
             }
 
-            this.scene.remove(this.rival.group);
+            this.rival.group.visible = false;
             this.rival.active = false;
             this.score += Math.round(500 * this.config.scoreMultiplier);
             this.endGame(true, 'RIVAL OPERATIVE DEFEATED IN 1V1 DUEL!');
@@ -1477,9 +1554,9 @@ class SplatArenaGame {
       this.camera.rotation.set(this.player.pitch, this.player.yaw, 0);
     }
 
-    // Auto Ink refill
-    if (this.config.autoReload && this.ink < 100) {
-      this.ink = Math.min(100, this.ink + 12 * delta);
+    // Auto Ink refill (gradual passive regen: 4.5% per second)
+    if (this.config.autoReload && !this.isReloading && this.ink < 100) {
+      this.ink = Math.min(100, this.ink + 4.5 * delta);
       this.updateInkBar();
     }
   }
@@ -1488,16 +1565,32 @@ class SplatArenaGame {
     if (this.ink >= 100 || this.isReloading) return;
     this.isReloading = true;
     this.sound.playReload();
-    this.dom.reloadPrompt.textContent = 'RECHARGING...';
     this.dom.reloadPrompt.classList.remove('hidden');
 
-    setTimeout(() => {
-      this.ink = 100;
-      this.isReloading = false;
+    const reloadDuration = 2200; // 2.2 seconds (slower, tactical reload)
+    const startTime = performance.now();
+    const startInk = this.ink;
+
+    if (this.reloadInterval) clearInterval(this.reloadInterval);
+    this.reloadInterval = setInterval(() => {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(1.0, elapsed / reloadDuration);
+      this.ink = startInk + (100 - startInk) * progress;
       this.updateInkBar();
-      this.dom.reloadPrompt.classList.add('hidden');
-      this.dom.reloadPrompt.textContent = 'PRESS [R] OR WAIT TO REFILL';
-    }, 450);
+
+      const remainingSec = Math.max(0, (reloadDuration - elapsed) / 1000).toFixed(1);
+      this.dom.reloadPrompt.textContent = `RECHARGING INK (${remainingSec}s)...`;
+
+      if (progress >= 1.0) {
+        clearInterval(this.reloadInterval);
+        this.reloadInterval = null;
+        this.ink = 100;
+        this.isReloading = false;
+        this.updateInkBar();
+        this.dom.reloadPrompt.classList.add('hidden');
+        this.dom.reloadPrompt.textContent = 'PRESS [R] OR WAIT TO REFILL';
+      }
+    }, 40);
   }
 
   updateInkBar() {
@@ -1505,7 +1598,7 @@ class SplatArenaGame {
     this.dom.inkBar.style.width = `${pct}%`;
     this.dom.inkPercent.textContent = `${pct}%`;
 
-    if (this.ink >= this.config.inkCost) {
+    if (this.ink >= this.config.inkCost && !this.isReloading) {
       this.dom.reloadPrompt.classList.add('hidden');
     }
   }
@@ -1655,6 +1748,10 @@ class SplatArenaGame {
     // Reset Rival
     if (this.rival) {
       this.rival.active = true;
+      this.rival.group.visible = true;
+      if (!this.scene.children.includes(this.rival.group)) {
+        this.scene.add(this.rival.group);
+      }
       this.rival.maxHp = this.config.rivalHp;
       this.rival.hp = this.config.rivalHp;
       this.rival.group.position.set(0, 0, -26);
